@@ -1,4 +1,5 @@
 <div align="center">
+  <img />
   # Contextract
   
   *Your AI-Powered Context Extraction Companion for Aider*
