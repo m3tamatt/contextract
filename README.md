@@ -1,6 +1,4 @@
 <div align="center">
-  <img src="https://your-logo-url.png" alt="Contextract Logo" width="200"/>
-
   # Contextract
   
   *Your AI-Powered Context Extraction Companion for Aider*
