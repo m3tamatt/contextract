@@ -1,5 +1,5 @@
 <div align="center">
-  Contextract
+  # Contextract
   
   *Your AI-Powered Context Extraction Companion for Aider*
 
