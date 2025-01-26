@@ -1,8 +1,6 @@
 <div align="center">
-  <img src="https://your-logo-url.png" alt="Contextract Logo" width="200"/>
-  # Contextract
-  
-  *Your AI-Powered Context Extraction Companion for Aider*
+  <h1 style="font-size: 3rem; margin-bottom: 0.5rem;">Contextract</h1>
+  <p style="font-size: 1.2rem; color: #666;">*Your AI-Powered Context Extraction Companion for Aider*</p>
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
   [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
