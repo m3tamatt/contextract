@@ -1,0 +1,337 @@
+#!/bin/bash
+# Name: contextract - v0.1
+
+# ----- Configuration -----
+MAX_RETRIES=3
+API_TIMEOUT=150  # seconds
+CONTEXT_LIMIT=6000000
+RETRY_DELAY=2
+
+# ----- Functions -----
+die() {
+    echo "❌ Error: $1" >&2
+    exit 1
+}
+
+sanitize_input() {
+    echo "$1" | tr -d '\0' | head -c 2048
+}
+
+validate_environment() {
+    command -v node >/dev/null || die "Node.js not installed"
+    command -v npm >/dev/null || die "npm not installed"
+    command -v curl >/dev/null || die "curl not installed"
+    [ -n "${DEEPSEEK_API_KEY:-}" ] || die "Set DEEPSEEK_API_KEY environment variable"
+    
+    GLOBAL_NODE_MODULES=$(npm root -g)
+    
+    local required_packages=("minimist" "directory-tree" "axios" "fs-extra")
+    for pkg in "${required_packages[@]}"; do
+        if [ ! -d "${GLOBAL_NODE_MODULES}/${pkg}" ]; then
+            die "Missing npm package: $pkg (install globally with 'npm install -g $pkg')"
+        fi
+    done
+}
+
+generate_tree_summary() {
+    local extensions="$1"
+    local tmp_script=$(mktemp).cjs
+
+    cat > "$tmp_script" << 'EOF'
+const fs = require('node:fs');
+const path = require('node:path');
+const { promisify } = require('node:util');
+const minimist = require('minimist');
+const directoryTree = require('directory-tree');
+const axios = require('axios');
+const fse = require('fs-extra');
+
+const readFile = promisify(fs.readFile);
+const writeFile = promisify(fs.writeFile);
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000;
+
+function formatTree(node, prefix = '', isLast = true) {
+    let result = '';
+    const currentPrefix = isLast ? '└── ' : '├── ';
+    
+    if (node.type === 'directory') {
+        result += `${prefix}${currentPrefix}${node.name}/\n`;
+        const childPrefix = prefix + (isLast ? '    ' : '│   ');
+        
+        node.children.forEach((child, index) => {
+            result += formatTree(child, childPrefix, index === node.children.length - 1);
+        });
+    } else {
+        result += `${prefix}${currentPrefix}${node.name}\n`;
+    }
+    
+    return result;
+}
+
+function collectFiles(node) {
+    const files = [];
+    function traverse(currentNode) {
+        if (currentNode.type === 'file') {
+            files.push({
+                path: path.relative(process.cwd(), currentNode.path),
+                name: currentNode.name,
+                content: fs.readFileSync(currentNode.path, 'utf8')
+            });
+        }
+        if (currentNode.children) {
+            currentNode.children.forEach(traverse);
+        }
+    }
+    traverse(node);
+    return files;
+}
+
+async function summarizeContent(content) {
+    const response = await axios.post(
+        'https://api.deepseek.com/v1/chat/completions',
+        {
+            model: 'deepseek-chat',
+            messages: [{
+                role: 'user',
+                content: `Provide a concise technical summary of this code file. Include:
+- Key imports/exports
+- Main functions/classes
+- Core logic flow
+- Critical configurations
+- Notable error handling
+Keep technical details precise but avoid implementation specifics.\n\n${content}`
+            }],
+            temperature: 0.2,
+            max_tokens: 500
+        },
+        {
+            headers: {
+                'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+                'Content-Type': 'application/json'
+            }
+        }
+    );
+    return response.data.choices[0].message.content.trim();
+}
+
+async function main() {
+    const args = minimist(process.argv.slice(2));
+    const extensions = args.e ? args.e.split(' ') : [];
+
+    if (!extensions.length) {
+      console.error('Please specify extensions using -e flag');
+      process.exit(1);
+    }
+    
+    const extPattern = new RegExp(
+      `\\.(${extensions
+        .map(ext => {
+          const cleanExt = ext.startsWith('.') ? ext.slice(1) : ext;
+          return cleanExt.replace(/\./g, '\\.');
+        })
+        .join('|')})$`,
+      'i'
+    );
+    
+    const tree = directoryTree(process.cwd(), {
+        extensions: extPattern,
+        normalizePath: true,
+        attributes: ['type', 'extension'],
+        exclude: /(^|[/\\])(node_modules|dist|build|coverage|.cache|.next|out)([/\\]|$)/i
+      });
+
+  const treeString = formatTree(tree);
+  await fse.outputFile('fullTree.md', generateMarkdown(treeString, tree));
+
+  const files = collectFiles(tree);
+  const summaries = await processFiles(files);
+  
+  await fse.outputFile('fullTreeSummary.md', generateSummaryMarkdown(treeString, summaries));
+}
+
+async function processFiles(files) {
+  const summaryPromises = files.map(async (file) => {
+    try {
+      const summary = await retryableSummarize(file.content);
+      return { ...file, summary };
+    } catch (error) {
+      console.error(`Failed to summarize ${file.path} after ${MAX_RETRIES} attempts`);
+      return { ...file, summary: `Summary unavailable: ${error.message}` };
+    }
+  });
+
+  return Promise.all(summaryPromises);
+}
+
+async function retryableSummarize(content) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await summarizeContent(content);
+    } catch (error) {
+      if (attempt === MAX_RETRIES) throw error;
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
+    }
+  }
+}
+
+function generateMarkdown(treeString, tree) {
+  let md = `# Directory Structure\n\`\`\`\n${treeString}\`\`\`\n\n# File Contents\n`;
+  
+  function addContents(node) {
+    if (node.type === 'file') {
+      md += `\n## ${node.name}\n\`\`\`typescript\n${fs.readFileSync(node.path, 'utf8')}\n\`\`\`\n`;
+    }
+    if (node.children) {
+      node.children.forEach(addContents);
+    }
+  }
+  
+  addContents(tree);
+  return md;
+}
+
+function generateSummaryMarkdown(treeString, summaries) {
+    let md = `# Directory Structure\n\`\`\`\n${treeString}\`\`\`\n\n# File Summaries\n`;
+    
+    summaries.forEach(({ path, name, summary }) => {
+      md += `\n## ${path}\n${summary}\n`;
+    });
+    
+    return md;
+  }
+
+main().catch(err => {
+    console.error(err);
+    process.exit(1);
+});
+EOF
+
+    NODE_PATH=$(npm root -g) node "$tmp_script" -e "$extensions" || die "Failed to generate project summary"
+    rm "$tmp_script"
+}
+
+# ----- Main Execution -----
+validate_environment
+
+# Argument parsing with proper ordering
+USE_EXISTING=false
+EXTENSIONS=""
+PROMPT=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -e|--extensions)
+            EXTENSIONS="$2"
+            shift 2
+            ;;
+        -p|--prompt)
+            PROMPT="$2"
+            shift 2
+            ;;
+        -exist|--existing)
+            USE_EXISTING=true
+            shift
+            ;;
+        *)
+            die "Unknown option: $1"
+            ;;
+    esac
+done
+
+# Strict argument validation
+if [ -z "$PROMPT" ]; then
+    die "Missing required argument: -p/--prompt"
+fi
+
+if [ "$USE_EXISTING" = false ]; then
+    if [ -z "$EXTENSIONS" ]; then
+        die "Missing required argument: -e/--extensions (required when not using -exist)"
+    fi
+    echo "🌳 Generating NEW project structure for extensions: $EXTENSIONS..."
+    generate_tree_summary "$EXTENSIONS"
+else
+    if [ ! -f "fullTreeSummary.md" ] || [ ! -s "fullTreeSummary.md" ]; then
+        die "Existing summary not found. Generate first without -exist flag."
+    fi
+    echo "📁 Using EXISTING project summary (fullTreeSummary.md)..."
+fi
+
+# Content validation
+STRUCTURE=$(<fullTreeSummary.md)
+SANITIZED_PROMPT=$(sanitize_input "$PROMPT")
+FULL_CONTEXT="Project Structure:\n$STRUCTURE\n\nUser Request: $SANITIZED_PROMPT"
+CONTEXT_SIZE=$(echo -ne "$FULL_CONTEXT" | wc -c)
+
+if [ "$CONTEXT_SIZE" -gt "$CONTEXT_LIMIT" ]; then
+    die "Context size exceeds limit (${CONTEXT_SIZE} > ${CONTEXT_LIMIT})"
+fi
+
+# API Processing with enhanced validation
+echo "🧠 Processing with Deepseek API (max $MAX_RETRIES retries)..."
+for ((attempt=1; attempt<=MAX_RETRIES; attempt++)); do
+    response=$(curl -sS --max-time "$API_TIMEOUT" \
+        -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+        -H "Content-Type: application/json" \
+        -d @- https://api.deepseek.com/v1/chat/completions <<EOF
+{
+    "model": "deepseek-chat",
+    "messages": [
+        {
+            "role": "system",
+            "content": "Respond ONLY with /add command listing required files. No explanations. ONLY add existing files from the context, make sure to not add inexisting files. Make sure to be perspicacious, and thoroughly pick all the files/ folders required to provide enough context to accomplish user's task, and possibly even more than he needs. Example: /add src/components/page.tsx src/components/bots/page.tsx src/components/bots/add/page.tsx src/contacts src/agents/bots.tsx"
+        },
+        {
+            "role": "user", 
+            "content": $(python3 -c 'import json; print(json.dumps(open("fullTreeSummary.md").read() + "\nUser Request: " + open("/dev/stdin").read()))' <<< "$SANITIZED_PROMPT")
+        }
+    ],
+    "temperature": 0.3,
+    "max_tokens": 1000
+}
+EOF
+    ) || {
+        echo "⚠️ API Connection failed (attempt $attempt/$MAX_RETRIES)"
+        echo "Curl exit code: $?" >> api_errors.log
+        sleep "$RETRY_DELAY"
+        continue
+    }
+
+    # Robust response parsing
+    if ! result=$(echo "$response" | python3 -c "
+import sys, json
+
+try:
+    data = json.load(sys.stdin)
+    if 'error' in data:
+        print(f'API Error: {data[\"error\"][\"message\"]}')
+        sys.exit(2)
+        
+    result = data['choices'][0]['message']['content'].strip()
+    if not result.startswith('/add'):
+        print(f'INVALID_FORMAT: {result[:100]}')
+        sys.exit(3)
+        
+    print(result)
+except json.JSONDecodeError:
+    print('🚨 Invalid JSON response')
+    sys.exit(1)
+except Exception as e:
+    print(f'🚨 Unexpected error: {str(e)}')
+    sys.exit(4)
+"); then
+        case $? in
+            2) echo "❌ API Error: $result" ;;
+            3) echo "❌ Invalid response format: ${result#*:}" ;;
+            4) echo "❌ Critical processing error" ;;
+            *) echo "❌ Unknown parsing error" ;;
+        esac
+        sleep "$RETRY_DELAY"
+        continue
+    fi
+
+    echo "$result"
+    exit 0
+done
+
+die "Failed to get valid response after $MAX_RETRIES attempts"
