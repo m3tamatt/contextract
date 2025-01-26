@@ -28,7 +28,7 @@ Contextract is an intelligent context extraction tool designed to enhance your e
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/contextract.git
+git clone https://github.com/m3tamatt/contextract.git
 
 # Install required global npm packages
 npm install -g minimist directory-tree axios fs-extra
@@ -140,7 +140,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <div align="center">
-  Made with ❤️ by [Your Name]
-  
-  [GitHub](https://github.com/yourusername) • [Twitter](https://twitter.com/yourusername) • [Website](https://yourwebsite.com)
+  Made with ❤️ by m3tamatt • [GitHub](https://github.com/m3tamatt)
 </div>
