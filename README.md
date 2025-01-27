@@ -28,7 +28,7 @@ Contextract is a powerful CLI tool that revolutionizes how you work with AI codi
 ### Method 1: Direct Installation (Recommended)
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/contextract.git
+git clone https://github.com/m3tamatt/contextract.git
 
 # Install required global npm packages
 npm install -g minimist directory-tree axios fs-extra
