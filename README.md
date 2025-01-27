@@ -1,5 +1,5 @@
 <div align="center">
-  <img/>
+  
 
   # Contextract
   
