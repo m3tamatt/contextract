@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://your-logo-url.png" alt="Contextract Logo" width="200"/>
+  <img/>
 
   # Contextract
   
