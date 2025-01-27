@@ -26,17 +26,43 @@ Contextract is a powerful CLI tool that revolutionizes how you work with AI codi
 
 ## 🚀 Installation
 
+### Method 1: Direct Installation (Recommended)
 ```bash
-# Install globally via npm
-npm install -g contextract
+# Clone the repository
+git clone https://github.com/yourusername/contextract.git
 
-# Or install manually
-git clone https://github.com/m3tamatt/contextract.git
-cd contextract
-npm install -g .
+# Install required global npm packages
+npm install -g minimist directory-tree axios fs-extra
 
-# Set up your DeepSeek API key (required)
+# Move the script to your binary directory
+sudo cp contextract /usr/local/bin/
+sudo chmod +x /usr/local/bin/contextract
+
+# Set up your DeepSeek API key (add this to your .bashrc or .zshrc)
 export DEEPSEEK_API_KEY='your-api-key-here'
+```
+
+### Method 2: Manual Download
+```bash
+# Download the script directly
+sudo curl -o /usr/local/bin/contextract https://raw.githubusercontent.com/m3tamatt/contextract/main/contextract
+
+# Make it executable
+sudo chmod +x /usr/local/bin/contextract
+
+# Install required global npm packages
+npm install -g minimist directory-tree axios fs-extra
+
+# Set up your DeepSeek API key (add this to your .bashrc or .zshrc)
+export DEEPSEEK_API_KEY='your-api-key-here'
+```
+
+### Verification
+```bash
+# Verify installation
+contextract --version
+# or
+which contextract  # Should show /usr/local/bin/contextract
 ```
 
 ## 💡 Usage
