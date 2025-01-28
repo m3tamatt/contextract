@@ -3,7 +3,7 @@
 
 # ----- Configuration -----
 MAX_RETRIES=3
-API_TIMEOUT=150  # seconds
+API_TIMEOUT=300  # seconds
 CONTEXT_LIMIT=6000000
 RETRY_DELAY=2
 
@@ -21,7 +21,7 @@ validate_environment() {
     command -v node >/dev/null || die "Node.js not installed"
     command -v npm >/dev/null || die "npm not installed"
     command -v curl >/dev/null || die "curl not installed"
-    [ -n "${DEEPSEEK_API_KEY:-}" ] || die "Set DEEPSEEK_API_KEY environment variable"
+    [ -n "${DEEPINFRA_API_KEY:-}" ] || die "Set DEEPINFRA_API_KEY environment variable"
     
     GLOBAL_NODE_MODULES=$(npm root -g)
     
@@ -88,31 +88,36 @@ function collectFiles(node) {
 }
 
 async function summarizeContent(content) {
-    const response = await axios.post(
-        'https://api.deepseek.com/v1/chat/completions',
-        {
-            model: 'deepseek-chat',
-            messages: [{
-                role: 'user',
-                content: `Provide a concise technical summary of this code file. Include:
+    try {
+        const response = await axios.post(
+            'https://api.deepinfra.com/v1/openai/chat/completions',
+            {
+                model: 'NousResearch/Hermes-3-Llama-3.1-405B',
+                messages: [{
+                    role: 'user',
+                    content: `Provide a concise technical summary of this code file. Include:
 - Key imports/exports
 - Main functions/classes
 - Core logic flow
 - Critical configurations
 - Notable error handling
 Keep technical details precise but avoid implementation specifics.\n\n${content}`
-            }],
-            temperature: 0.2,
-            max_tokens: 500
-        },
-        {
-            headers: {
-                'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-                'Content-Type': 'application/json'
+                }],
+                temperature: 0.2,
+                max_tokens: 500
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${process.env.DEEPINFRA_API_KEY}`,
+                    'Content-Type': 'application/json'
+                }
             }
-        }
-    );
-    return response.data.choices[0].message.content.trim();
+        );
+        return response.data.choices[0].message.content.trim();
+    } catch (error) {
+        console.error('API Error:', error.response?.data || error.message);
+        throw error;
+    }
 }
 
 async function main() {
@@ -120,18 +125,18 @@ async function main() {
     const extensions = args.e ? args.e.split(' ') : [];
 
     if (!extensions.length) {
-      console.error('Please specify extensions using -e flag');
-      process.exit(1);
+        console.error('Please specify extensions using -e flag');
+        process.exit(1);
     }
     
     const extPattern = new RegExp(
-      `\\.(${extensions
-        .map(ext => {
-          const cleanExt = ext.startsWith('.') ? ext.slice(1) : ext;
-          return cleanExt.replace(/\./g, '\\.');
-        })
-        .join('|')})$`,
-      'i'
+        `\\.(${extensions
+            .map(ext => {
+                const cleanExt = ext.startsWith('.') ? ext.slice(1) : ext;
+                return cleanExt.replace(/\./g, '\\.');
+            })
+            .join('|')})$`,
+        'i'
     );
     
     const tree = directoryTree(process.cwd(), {
@@ -139,67 +144,67 @@ async function main() {
         normalizePath: true,
         attributes: ['type', 'extension'],
         exclude: /(^|[/\\])(node_modules|dist|build|coverage|.cache|.next|out)([/\\]|$)/i
-      });
+    });
 
-  const treeString = formatTree(tree);
-  await fse.outputFile('fullTree.md', generateMarkdown(treeString, tree));
+    const treeString = formatTree(tree);
+    await fse.outputFile('fullTree.md', generateMarkdown(treeString, tree));
 
-  const files = collectFiles(tree);
-  const summaries = await processFiles(files);
-  
-  await fse.outputFile('fullTreeSummary.md', generateSummaryMarkdown(treeString, summaries));
+    const files = collectFiles(tree);
+    const summaries = await processFiles(files);
+    
+    await fse.outputFile('fullTreeSummary.md', generateSummaryMarkdown(treeString, summaries));
 }
 
 async function processFiles(files) {
-  const summaryPromises = files.map(async (file) => {
-    try {
-      const summary = await retryableSummarize(file.content);
-      return { ...file, summary };
-    } catch (error) {
-      console.error(`Failed to summarize ${file.path} after ${MAX_RETRIES} attempts`);
-      return { ...file, summary: `Summary unavailable: ${error.message}` };
-    }
-  });
+    const summaryPromises = files.map(async (file) => {
+        try {
+            const summary = await retryableSummarize(file.content);
+            return { ...file, summary };
+        } catch (error) {
+            console.error(`Failed to summarize ${file.path} after ${MAX_RETRIES} attempts`);
+            return { ...file, summary: `Summary unavailable: ${error.message}` };
+        }
+    });
 
-  return Promise.all(summaryPromises);
+    return Promise.all(summaryPromises);
 }
 
 async function retryableSummarize(content) {
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      return await summarizeContent(content);
-    } catch (error) {
-      if (attempt === MAX_RETRIES) throw error;
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            return await summarizeContent(content);
+        } catch (error) {
+            if (attempt === MAX_RETRIES) throw error;
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
+        }
     }
-  }
 }
 
 function generateMarkdown(treeString, tree) {
-  let md = `# Directory Structure\n\`\`\`\n${treeString}\`\`\`\n\n# File Contents\n`;
-  
-  function addContents(node) {
-    if (node.type === 'file') {
-      md += `\n## ${node.name}\n\`\`\`typescript\n${fs.readFileSync(node.path, 'utf8')}\n\`\`\`\n`;
+    let md = `# Directory Structure\n\`\`\`\n${treeString}\`\`\`\n\n# File Contents\n`;
+    
+    function addContents(node) {
+        if (node.type === 'file') {
+            md += `\n## ${node.name}\n\`\`\`typescript\n${fs.readFileSync(node.path, 'utf8')}\n\`\`\`\n`;
+        }
+        if (node.children) {
+            node.children.forEach(addContents);
+        }
     }
-    if (node.children) {
-      node.children.forEach(addContents);
-    }
-  }
-  
-  addContents(tree);
-  return md;
+    
+    addContents(tree);
+    return md;
 }
 
 function generateSummaryMarkdown(treeString, summaries) {
     let md = `# Directory Structure\n\`\`\`\n${treeString}\`\`\`\n\n# File Summaries\n`;
     
     summaries.forEach(({ path, name, summary }) => {
-      md += `\n## ${path}\n${summary}\n`;
+        md += `\n## ${path}\n${summary}\n`;
     });
     
     return md;
-  }
+}
 
 main().catch(err => {
     console.error(err);
@@ -259,8 +264,10 @@ fi
 
 # Content validation
 STRUCTURE=$(<fullTreeSummary.md)
+# Remove directory structure part (everything between # Directory Structure and # File Summaries)
+STRUCTURE=$(echo "$STRUCTURE" | sed -n '/# File Summaries/,$p')
 SANITIZED_PROMPT=$(sanitize_input "$PROMPT")
-FULL_CONTEXT="Project Structure:\n$STRUCTURE\n\nUser Request: $SANITIZED_PROMPT"
+FULL_CONTEXT="Project Structure:\n$STRUCTURE\n\nYour task is to match the files a user needs for context, to accomplish his request, User's Request is provided in the context, below. You MUST respond ONLY with /add command listing required files. No explanations, no <tags>, only /add .... ONLY add existing files from the context, make sure to not add inexisting files. Example: /add src/components/page.tsx src/components/bots/page.tsx. User Request: $SANITIZED_PROMPT"
 CONTEXT_SIZE=$(echo -ne "$FULL_CONTEXT" | wc -c)
 
 if [ "$CONTEXT_SIZE" -gt "$CONTEXT_LIMIT" ]; then
@@ -268,70 +275,116 @@ if [ "$CONTEXT_SIZE" -gt "$CONTEXT_LIMIT" ]; then
 fi
 
 # API Processing with enhanced validation
-echo "🧠 Processing with Deepseek API (max $MAX_RETRIES retries)..."
+# API Processing with enhanced validation
+echo "🧠 Processing with Deepinfra API (max $MAX_RETRIES retries)..."
 for ((attempt=1; attempt<=MAX_RETRIES; attempt++)); do
-    response=$(curl -sS --max-time "$API_TIMEOUT" \
-        -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
-        -H "Content-Type: application/json" \
-        -d @- https://api.deepseek.com/v1/chat/completions <<EOF
+    # Create temporary files
+    tmp_request=$(mktemp)
+
+    # Sanitize the context properly for JSON
+    SANITIZED_CONTEXT=$(echo "$FULL_CONTEXT" | jq -Rs .)
+
+    # Create the request JSON with properly escaped content
+    cat > "$tmp_request" << EOF
 {
-    "model": "deepseek-chat",
+    "model": "NousResearch/Hermes-3-Llama-3.1-405B",
     "messages": [
         {
             "role": "system",
-            "content": "Respond ONLY with /add command listing required files. No explanations. ONLY add existing files from the context, make sure to not add inexisting files. Make sure to be perspicacious, and thoroughly pick all the files/ folders required to provide enough context to accomplish user's task, and possibly even more than he needs. Example: /add src/components/page.tsx src/components/bots/page.tsx src/components/bots/add/page.tsx src/contacts src/agents/bots.tsx"
+            "content": "Your task is to match the files a user needs for context, to accomplish his request, User's Request is provided in the context, below. You MUST respond ONLY with /add command listing required files. No explanations, no <tags>, only /add .... ONLY add existing files from the context, make sure to not add inexisting files. Example: /add src/components/page.tsx src/components/bots/page.tsx"
         },
         {
-            "role": "user", 
-            "content": $(python3 -c 'import json; print(json.dumps(open("fullTreeSummary.md").read() + "\nUser Request: " + open("/dev/stdin").read()))' <<< "$SANITIZED_PROMPT")
+            "role": "user",
+            "content": ${SANITIZED_CONTEXT}
         }
     ],
-    "temperature": 0.3,
-    "max_tokens": 1000
+    "temperature": 0.2,
+    "max_tokens": 500
 }
 EOF
-    ) || {
-        echo "⚠️ API Connection failed (attempt $attempt/$MAX_RETRIES)"
-        echo "Curl exit code: $?" >> api_errors.log
-        sleep "$RETRY_DELAY"
-        continue
-    }
 
-    # Robust response parsing
-    if ! result=$(echo "$response" | python3 -c "
-import sys, json
+    # Then check size and truncate if needed
+    request_size=$(wc -c < "$tmp_request")
+    if [ "$request_size" -gt 100000000 ]; then
+        echo "⚠️ Truncating large context from ${request_size} bytes to 90000 bytes"
+        TRUNCATED_CONTEXT=$(echo "$FULL_CONTEXT" | head -c 90000)
+        SANITIZED_TRUNCATED_CONTEXT=$(echo "$TRUNCATED_CONTEXT" | jq -Rs .)
+        
+        # Recreate request with truncated context
+        cat > "$tmp_request" << EOF
+{
+    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "messages": [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant. You MUST respond ONLY with /add command listing required files. No explanations. ONLY add existing files from the context, make sure to not add inexisting files. Example: /add src/components/page.tsx src/components/bots/page.tsx"
+        },
+        {
+            "role": "user",
+            "content": ${SANITIZED_TRUNCATED_CONTEXT}
+        }
+    ],
+    "temperature": 0.2,
+    "max_tokens": 500
+}
+EOF
+    fi
 
-try:
-    data = json.load(sys.stdin)
-    if 'error' in data:
-        print(f'API Error: {data[\"error\"][\"message\"]}')
-        sys.exit(2)
-        
-    result = data['choices'][0]['message']['content'].strip()
-    if not result.startswith('/add'):
-        print(f'INVALID_FORMAT: {result[:100]}')
-        sys.exit(3)
-        
-    print(result)
-except json.JSONDecodeError:
-    print('🚨 Invalid JSON response')
-    sys.exit(1)
-except Exception as e:
-    print(f'🚨 Unexpected error: {str(e)}')
-    sys.exit(4)
-"); then
-        case $? in
-            2) echo "❌ API Error: $result" ;;
-            3) echo "❌ Invalid response format: ${result#*:}" ;;
-            4) echo "❌ Critical processing error" ;;
-            *) echo "❌ Unknown parsing error" ;;
-        esac
+    # Save request to file for debugging
+    echo "Full API Request:" > api_debug.log
+    cat "$tmp_request" >> api_debug.log
+    echo -e "\nRequest size: $request_size bytes\n" >> api_debug.log
+
+    # Make API call and save full response
+    response=$(curl -s \
+        -H "Authorization: Bearer $DEEPINFRA_API_KEY" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
+        -d @"$tmp_request" \
+        -w "\n%{http_code}" \
+        "https://api.deepinfra.com/v1/openai/chat/completions")
+
+    # Split response into body and status code
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$ d')
+
+    # Save response to debug file
+    echo "HTTP Status: $http_code" >> api_debug.log
+    echo "Response Body:" >> api_debug.log
+    echo "$body" >> api_debug.log
+
+    # Check for error status codes
+    if [ "$http_code" -eq 500 ]; then
+        echo "❌ Server error (500). Response:"
+        echo "$body"
+        echo "Context size: $(wc -c < "$tmp_request") bytes"
         sleep "$RETRY_DELAY"
         continue
     fi
 
+    # Extract content from response
+    result=$(echo "$body" | jq -r '.choices[0].message.content' 2>/dev/null)
+    
+    if [ -z "$result" ] || [ "$result" = "null" ]; then
+        echo "❌ Failed to parse response:"
+        echo "$body"
+        sleep "$RETRY_DELAY"
+        continue
+    fi
+
+    echo "Response:"
     echo "$result"
+    # Validate response starts with /add
+    if [[ ! "$result" =~ ^/add ]]; then
+        echo "❌ Invalid response format (doesn't start with /add)"
+        echo "Full response saved to api_debug.log"
+        sleep "$RETRY_DELAY"
+        continue
+    fi
+
+
+    rm "$tmp_request"
     exit 0
 done
 
-die "Failed to get valid response after $MAX_RETRIES attempts"
+die "Failed to get valid response after $MAX_RETRIES attempts. Check api_debug.log for details"
