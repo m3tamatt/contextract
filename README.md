@@ -59,7 +59,7 @@ export DEEPSEEK_API_KEY='your-api-key-here'
 ### Verification
 ```bash
 # Verify installation
-contextract --version
+contextract
 # or
 which contextract  # Should show /usr/local/bin/contextract
 ```
